@@ -255,7 +255,9 @@ function stableId(prefix, s){
 }
 
 function parseTagFromLine(line){
-  const m = line.match(/\(Tag:\s*([^)]+)\)/i);
+  // Use a lookahead so the capture includes nested parentheses, e.g.
+  // "(Tag: XS-0013(16-IS-006)) >> Activate" returns "XS-0013(16-IS-006)".
+  const m = line.match(/\(Tag:\s*([\s\S]+?)\)(?=\s*(?:\[|>>|$))/i);
   if (!m) return null;
   return normalizeSpaces(m[1]);
 }
@@ -305,6 +307,62 @@ function parseSections(raw){
   return sections;
 }
 
+// Normalize a tag to a canonical lookup key so references like "16-IS-001",
+// "IS-001", "16-IS-12 A", and "XS-0013(16-IS-006)" all resolve against the
+// C&E header tags. Handles optional "16-" prefix, zero-padded numerics, and
+// nested logic references in parentheses.
+function canonicalTagKey(raw){
+  if (!raw) return null;
+  let t = normalizeSpaces(raw).toUpperCase();
+  // If the tag carries a nested logic reference like "XS-0013(16-IS-006)",
+  // prefer the inner reference for the chain lookup.
+  const nested = t.match(/\(([^()]+)\)/);
+  if (nested && /[A-Z]+-\d/.test(nested[1])) t = normalizeSpaces(nested[1]);
+  // Strip an optional "16-" plant prefix so "16-IS-001" == "IS-001".
+  t = t.replace(/^16-/, '');
+  // Zero-pad the short numeric part after the letter prefix ("IS-12" -> "IS-012").
+  t = t.replace(/^([A-Z]+-)(\d{1,3})(?=$|[^\d])/, (_, p, n) => p + String(n).padStart(3, '0'));
+  return t;
+}
+
+// Split combined effect tags like "16-I-016/I-017" into individual refs.
+// Keeps "IS-012 A/B" style family markers together, and leaves nested
+// paren references for canonicalTagKey to handle.
+function splitCombinedTag(raw){
+  if (!raw) return [];
+  const t = normalizeSpaces(raw);
+  if (/\bA\/B\b/i.test(t)) return [t];
+  if (/\(/.test(t)) return [t];
+  if (!t.includes('/')) return [t];
+  const parts = t.split('/').map(s => s.trim()).filter(Boolean);
+  const head = parts[0];
+  const headMatch = head.match(/^((?:\d+-)?)([A-Z]+)-/i);
+  if (!headMatch) return [t];
+  const numPrefix = headMatch[1] || '';
+  const letterPrefix = headMatch[2];
+  return parts.map((p, i) => {
+    if (i === 0) return p;
+    if (/^[A-Z]+-/i.test(p) && numPrefix && !p.toUpperCase().startsWith(numPrefix.toUpperCase())) return numPrefix + p;
+    if (/^\d/.test(p)) return numPrefix + letterPrefix + '-' + p;
+    return p;
+  });
+}
+
+// Expand a section header into every variant key that should resolve to it.
+// Example: "16-IS-012 A/B" -> ["IS-012 A/B", "IS-012", "IS-012 A", "IS-012 B"].
+function logicTagVariants(rawHeader){
+  const canonical = canonicalTagKey(rawHeader);
+  if (!canonical) return [];
+  const variants = new Set([canonical]);
+  const m = canonical.match(/^(.+?)\s+A\/B$/);
+  if (m){
+    variants.add(m[1]);
+    variants.add(`${m[1]} A`);
+    variants.add(`${m[1]} B`);
+  }
+  return [...variants];
+}
+
 function buildGraphFromSections(sections){
   /** @type {Map<string, Node>} */
   const nodes = new Map();
@@ -319,9 +377,14 @@ function buildGraphFromSections(sections){
   const logicIdByTag = new Map();
   for (const s of sections){
     const id = stableId('logic', s.logicTag);
-    logicIdByTag.set(s.logicTag.toUpperCase(), id);
+    for (const v of logicTagVariants(s.logicTag)) logicIdByTag.set(v, id);
     ensureNode({ id, kind:'logic', tag:s.logicTag, title:s.logicTitle });
   }
+
+  const pushEdge = (from, to, rel) => {
+    if (from === to) return; // skip self-loops
+    edges.push({ from, to, rel });
+  };
 
   for (const s of sections){
     const logicId = stableId('logic', s.logicTag);
@@ -333,25 +396,43 @@ function buildGraphFromSections(sections){
 
       const id = tag ? stableId('tag', tag) : stableId('cause', title);
       ensureNode({ id, kind, tag: tag || undefined, title });
-      edges.push({ from:id, to:logicId, rel:'cause_to_logic' });
+      pushEdge(id, logicId, 'cause_to_logic');
     }
 
     for (const rawLine of s.effects){
-      const tag = parseTagFromLine(rawLine);
+      const rawTag = parseTagFromLine(rawLine);
       const action = parseActionFromLine(rawLine);
       const title = stripNotes(rawLine);
 
-      // If an effect activates another logic block, treat it as logic for chaining.
-      const tagKey = tag ? tag.toUpperCase() : null;
-      const maybeLogicId = tagKey && logicIdByTag.get(tagKey);
-      if (maybeLogicId){
-        edges.push({ from:logicId, to:maybeLogicId, rel:'logic_to_effect' });
-        continue;
+      // An effect may reference one or more downstream logic blocks.
+      // Examples:
+      //   "16-IS-010"                 -> single chain to IS-010
+      //   "16-IS-12 A"                -> single chain to IS-012 A/B family
+      //   "16-I-016/I-017"            -> two chains: I-016 and I-017
+      //   "XS-0013(16-IS-006)"        -> single chain to IS-006 (inner)
+      const candidates = splitCombinedTag(rawTag);
+      /** @type {string[]} */
+      const matchedIds = [];
+      for (const c of candidates){
+        const key = canonicalTagKey(c);
+        const mid = key && logicIdByTag.get(key);
+        if (mid) matchedIds.push(mid);
       }
 
-      const id = tag ? stableId('tag', tag) : stableId('effect', title);
-      ensureNode({ id, kind:'effect', tag: tag || undefined, title, detail: action ? `Action: ${action}` : undefined });
-      edges.push({ from:logicId, to:id, rel:'logic_to_effect' });
+      if (matchedIds.length){
+        let chained = 0;
+        for (const mid of matchedIds){
+          if (mid === logicId) continue; // skip self-reference
+          pushEdge(logicId, mid, 'logic_to_effect');
+          chained++;
+        }
+        if (chained > 0) continue; // fully chained -> no terminal device node
+        // else fall through and render as a terminal effect node
+      }
+
+      const id = rawTag ? stableId('tag', rawTag) : stableId('effect', title);
+      ensureNode({ id, kind:'effect', tag: rawTag || undefined, title, detail: action ? `Action: ${action}` : undefined });
+      pushEdge(logicId, id, 'logic_to_effect');
     }
   }
 
@@ -520,7 +601,7 @@ function layoutGraph(seedId, nodesById, edges, collapseDuplicates){
   };
 
   const nodeW = 290;
-  const nodeH = 64;
+  const nodeH = 82;
   const gapX = 70;
   const gapY = 16;
 
@@ -637,16 +718,34 @@ function renderGraphSvg(svg, nodesById, edges, layout, seedId){
     const title = document.createElementNS(NS, 'text');
     title.classList.add('node-text');
     title.setAttribute('x', String(p.x + 12));
-    title.setAttribute('y', String(p.y + 22));
-    title.textContent = shrinkText(n.title, 42);
+    title.setAttribute('y', String(p.y + 24));
+    title.textContent = shrinkText(n.title, 40);
     g.appendChild(title);
 
-    const sub = document.createElementNS(NS, 'text');
-    sub.classList.add('node-sub');
-    sub.setAttribute('x', String(p.x + 12));
-    sub.setAttribute('y', String(p.y + 42));
-    sub.textContent = shrinkText(n.tag ? `${n.tag}${n.detail ? ` • ${n.detail}` : ''}` : (n.detail || n.kind.toUpperCase()), 56);
-    g.appendChild(sub);
+    if (n.tag){
+      const tagEl = document.createElementNS(NS, 'text');
+      tagEl.classList.add('node-tag');
+      tagEl.setAttribute('x', String(p.x + 12));
+      tagEl.setAttribute('y', String(p.y + 50));
+      tagEl.textContent = shrinkText(n.tag, 30);
+      g.appendChild(tagEl);
+
+      if (n.detail){
+        const det = document.createElementNS(NS, 'text');
+        det.classList.add('node-sub');
+        det.setAttribute('x', String(p.x + 12));
+        det.setAttribute('y', String(p.y + 70));
+        det.textContent = shrinkText(n.detail, 50);
+        g.appendChild(det);
+      }
+    } else {
+      const sub = document.createElementNS(NS, 'text');
+      sub.classList.add('node-sub');
+      sub.setAttribute('x', String(p.x + 12));
+      sub.setAttribute('y', String(p.y + 50));
+      sub.textContent = shrinkText(n.detail || n.kind.toUpperCase(), 56);
+      g.appendChild(sub);
+    }
 
     const hit = document.createElementNS(NS, 'rect');
     hit.classList.add('node-hit');
@@ -733,6 +832,7 @@ function installWheelZoom(svg, wrap){
 
   const apply = () => {
     raf = 0;
+    if (svg.__panning){ target = null; return; }
     const cur = parseViewBox(svg.getAttribute('viewBox'));
     if (!cur || !target) return;
 
@@ -787,6 +887,76 @@ function installWheelZoom(svg, wrap){
   }, { passive:false });
 }
 
+function installPan(svg, wrap){
+  // Mouse/pointer drag to pan the viewBox. Coexists with wheel zoom and the
+  // node click-to-reseed handler (a click is suppressed only if the drag
+  // actually moved beyond a small pixel threshold).
+  let active = false;
+  let startCX = 0, startCY = 0;
+  let startVB = null;
+  let moved = false;
+  const MOVE_PX = 4;
+
+  const onDown = (e) => {
+    if (e.button !== undefined && e.button !== 0) return; // primary only
+    const vb = parseViewBox(svg.getAttribute('viewBox'));
+    if (!vb) return;
+    active = true;
+    moved = false;
+    startCX = e.clientX;
+    startCY = e.clientY;
+    startVB = vb;
+    svg.__panning = true;
+    svg.__panMoved = false;
+    wrap.classList.add('panning');
+    if (e.pointerId !== undefined){
+      try { svg.setPointerCapture && svg.setPointerCapture(e.pointerId); } catch (_){ /* noop */ }
+    }
+  };
+
+  const onMove = (e) => {
+    if (!active || !startVB) return;
+    const rect = svg.getBoundingClientRect();
+    const scaleX = startVB.w / Math.max(1, rect.width);
+    const scaleY = startVB.h / Math.max(1, rect.height);
+    const dxPx = e.clientX - startCX;
+    const dyPx = e.clientY - startCY;
+    if (!moved && Math.hypot(dxPx, dyPx) > MOVE_PX){
+      moved = true;
+      svg.__panMoved = true;
+    }
+    setViewBox(svg, {
+      x: startVB.x - dxPx * scaleX,
+      y: startVB.y - dyPx * scaleY,
+      w: startVB.w,
+      h: startVB.h,
+    });
+  };
+
+  const onUp = (e) => {
+    if (!active) return;
+    active = false;
+    startVB = null;
+    svg.__panning = false;
+    wrap.classList.remove('panning');
+    if (e && e.pointerId !== undefined){
+      try { svg.releasePointerCapture && svg.releasePointerCapture(e.pointerId); } catch (_){ /* noop */ }
+    }
+    // Keep the suppression flag alive just long enough for the trailing
+    // "click" event (fired right after pointerup) to read it.
+    if (moved){
+      setTimeout(() => { svg.__panMoved = false; }, 30);
+    } else {
+      svg.__panMoved = false;
+    }
+  };
+
+  svg.addEventListener('pointerdown', onDown);
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
+}
+
 function renderResults(list, nodes, onPick){
   const el = document.getElementById('results');
   el.innerHTML = '';
@@ -803,12 +973,14 @@ function renderResults(list, nodes, onPick){
     const btn = document.createElement('button');
     btn.className = 'result-btn';
     btn.type = 'button';
+    const tagHtml = n.tag ? `<span class="result-tag">${escapeXml(n.tag)}</span>` : '';
+    const detailHtml = n.detail ? `<span class="result-detail">${n.tag ? ' • ' : ''}${escapeXml(n.detail)}</span>` : '';
     btn.innerHTML = `
       <div class="result-top">
         <span class="chip ${escapeXml(n.kind)}">${escapeXml(kindLabel(n.kind))}</span>
         <div class="result-title">${escapeXml(n.title)}</div>
       </div>
-      <div class="result-sub">${escapeXml(n.tag ? n.tag : (n.detail || ''))}</div>
+      <div class="result-sub">${tagHtml}${detailHtml}</div>
     `;
     btn.addEventListener('click', () => onPick(id));
     el.appendChild(btn);
@@ -834,9 +1006,9 @@ function renderSelected(id, nodes){
       <span class="chip ${escapeXml(n.kind)}">${escapeXml(kindLabel(n.kind))}</span>
       <div style="font-weight:900">${escapeXml(n.title)}</div>
     </div>
-    <div style="color:rgba(160,174,192,.95);font-size:12px">
-      <div><span style="font-family:var(--mono)">${escapeXml(n.tag || '')}</span></div>
-      ${n.detail ? `<div>${escapeXml(n.detail)}</div>` : ``}
+    <div style="font-size:12px">
+      ${n.tag ? `<div class="result-tag">${escapeXml(n.tag)}</div>` : ``}
+      ${n.detail ? `<div class="result-detail">${escapeXml(n.detail)}</div>` : ``}
     </div>
   `;
 }
@@ -955,12 +1127,14 @@ function main(){
 
   // Allow graph node click to re-seed tracing.
   svg.addEventListener('click', (e) => {
+    if (svg.__panMoved) return; // swallow the click that ended a drag-pan
     const g = e.target?.closest?.('.node');
     const id = g?.dataset?.nodeId;
     if (id) pick(id);
   });
 
   installWheelZoom(svg, graphWrap);
+  installPan(svg, graphWrap);
   reset();
 }
 
