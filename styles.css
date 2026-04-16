@@ -285,7 +285,19 @@ select{
 .chip.logic{border-color:rgba(191,64,255,.35); color:rgba(232,180,255,.95)}
 .chip.effect{border-color:rgba(252,129,129,.3); color:rgba(254,215,215,.95)}
 .result-title{font-weight:850; letter-spacing:.02em}
-.result-sub{margin-top:6px; font-size:12px; color:rgba(160,174,192,.92)}
+.result-sub{margin-top:6px; font-size:12px; color:rgba(160,174,192,.92); display:flex; flex-wrap:wrap; align-items:baseline; gap:2px}
+.result-tag{
+  font-family:var(--mono);
+  font-weight:900;
+  font-size:13px;
+  letter-spacing:.03em;
+  color:#7dffea;
+  text-shadow:0 0 8px rgba(125,255,234,.4);
+}
+.result-detail{
+  color:rgba(160,174,192,.95);
+  font-size:12px;
+}
 .selected{
   border:1px dashed rgba(167,139,250,.28);
   border-radius:12px;
@@ -329,7 +341,11 @@ select{
 .graph-wrap{
   position:absolute; inset:0;
   padding-top:50px;
+  cursor:grab;
+  touch-action:none;
 }
+.graph-wrap.panning{cursor:grabbing}
+.graph-wrap.panning .node-hit{cursor:grabbing}
 .graph{
   width:100%;
   height:100%;
@@ -365,6 +381,17 @@ select{
   font-family:var(--mono);
   fill:rgba(160,174,192,.88);
   font-size:11.5px;
+}
+.node-tag{
+  font-family:var(--mono);
+  font-weight:900;
+  font-size:15px;
+  letter-spacing:.03em;
+  fill:#7dffea;
+  paint-order:stroke;
+  stroke:rgba(5,8,16,.9);
+  stroke-width:3;
+  filter:drop-shadow(0 0 5px rgba(125,255,234,.55));
 }
 
 .node.cause .node-rect{fill:rgba(26,32,53,.55); stroke:rgba(74,144,217,.35)}
