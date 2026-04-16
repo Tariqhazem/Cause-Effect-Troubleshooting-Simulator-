@@ -365,10 +365,50 @@ select{
 .status-right{font-family:var(--mono); font-size:11px; color:rgba(224,231,255,.65)}
 
 /* ───────────────── SVG GRAPH STYLES ───────────────── */
-.edge{fill:none; stroke:rgba(160,174,192,.55); stroke-width:1.7}
-.edge.down{stroke:rgba(252,129,129,.38)}
-.edge.up{stroke:rgba(74,144,217,.35)}
-.edge.logic{stroke:rgba(191,64,255,.35)}
+.edge{fill:none; stroke:rgba(160,174,192,.55); stroke-width:1.7; transition:opacity .12s ease, stroke-width .1s ease, filter .12s ease}
+/* Edge color matches the SOURCE bubble's kind:
+   cause = blue, logic = purple, effect = red. */
+.edge-vis.from-cause{stroke:rgba(74,144,217,.72); color:rgba(74,144,217,.95)}
+.edge-vis.from-logic{stroke:rgba(191,64,255,.65); color:rgba(191,64,255,.95)}
+.edge-vis.from-effect{stroke:rgba(252,129,129,.7); color:rgba(252,129,129,.95)}
+.edge-vis{pointer-events:none}
+/* Invisible wide stroke for easy hover hit-testing on thin edges. */
+.edge-hit{stroke:transparent; stroke-width:16; pointer-events:stroke; cursor:help}
+
+/* Hover-focus: dim non-hovered edges/nodes; emphasize the hovered one
+   plus its incident edges and neighbor bubbles. */
+.node{transition:opacity .12s ease}
+.graph.has-hover .edge-vis:not(.emph){opacity:.1}
+.graph.has-hover .node:not(.emph){opacity:.28}
+.edge-vis.emph{stroke-width:2.8; filter:drop-shadow(0 0 6px currentColor)}
+.node.emph:not(.selected) .node-rect{stroke-width:2.4; filter:drop-shadow(0 0 12px rgba(191,64,255,.4))}
+
+/* Edge tooltip: appears next to the cursor while hovering an arrow. */
+.edge-tooltip{
+  position:absolute;
+  pointer-events:none;
+  background:rgba(7,10,18,.92);
+  border:1px solid rgba(167,139,250,.38);
+  color:#e8ecf0;
+  padding:6px 10px;
+  border-radius:8px;
+  font-family:var(--mono);
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:.02em;
+  box-shadow:0 10px 30px rgba(0,0,0,.6), 0 0 18px rgba(191,64,255,.25);
+  backdrop-filter:blur(8px);
+  z-index:5;
+  opacity:0;
+  transform:translate(14px, 14px);
+  transition:opacity .12s ease;
+  white-space:nowrap;
+  max-width:360px;
+}
+.edge-tooltip.show{opacity:1}
+.edge-tooltip .arrow-from{color:#9bd0ff}
+.edge-tooltip .arrow-to{color:#ffb3b3}
+.edge-tooltip .arrow-mid{color:#7dffea; margin:0 8px}
 
 .node-rect{rx:12; ry:12; stroke-width:1.2}
 .node-text{

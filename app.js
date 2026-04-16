@@ -642,17 +642,14 @@ function renderGraphSvg(svg, nodesById, edges, layout, seedId){
 
   const defs = document.createElementNS(NS, 'defs');
   defs.innerHTML = `
-    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-      <path d="M0,0 L10,3.5 L0,7 Z" fill="rgba(160,174,192,.7)"></path>
-    </marker>
-    <marker id="arrow-down" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-      <path d="M0,0 L10,3.5 L0,7 Z" fill="rgba(252,129,129,.55)"></path>
-    </marker>
-    <marker id="arrow-up" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-      <path d="M0,0 L10,3.5 L0,7 Z" fill="rgba(74,144,217,.55)"></path>
+    <marker id="arrow-cause" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L10,3.5 L0,7 Z" fill="rgba(74,144,217,.85)"></path>
     </marker>
     <marker id="arrow-logic" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-      <path d="M0,0 L10,3.5 L0,7 Z" fill="rgba(191,64,255,.55)"></path>
+      <path d="M0,0 L10,3.5 L0,7 Z" fill="rgba(191,64,255,.8)"></path>
+    </marker>
+    <marker id="arrow-effect" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L10,3.5 L0,7 Z" fill="rgba(252,129,129,.8)"></path>
     </marker>
   `;
   svg.appendChild(defs);
@@ -685,18 +682,26 @@ function renderGraphSvg(svg, nodesById, edges, layout, seedId){
     const c2x = tx - bend;
     const d = `M ${sx} ${sy} C ${c1x} ${sy}, ${c2x} ${ty}, ${tx} ${ty}`;
 
+    const fromK = kindOf(e.from);
+    const marker = `url(#arrow-${fromK})`;
+
     const path = document.createElementNS(NS, 'path');
     path.setAttribute('d', d);
-    path.classList.add('edge');
-
-    const fromK = kindOf(e.from);
-    const toK = kindOf(e.to);
-    let marker = 'url(#arrow)';
-    if (toK === 'effect') { path.classList.add('down'); marker = 'url(#arrow-down)'; }
-    else if (fromK === 'cause') { path.classList.add('up'); marker = 'url(#arrow-up)'; }
-    else { path.classList.add('logic'); marker = 'url(#arrow-logic)'; }
+    path.classList.add('edge', 'edge-vis', `from-${fromK}`);
+    path.dataset.from = e.from;
+    path.dataset.to = e.to;
     path.setAttribute('marker-end', marker);
     edgeLayer.appendChild(path);
+
+    // Invisible wider stroke gives a comfortable hover/hit target even though
+    // the visible edge is thin. Appended after the visible path so it sits on
+    // top and catches pointer events first.
+    const hit = document.createElementNS(NS, 'path');
+    hit.setAttribute('d', d);
+    hit.classList.add('edge', 'edge-hit');
+    hit.dataset.from = e.from;
+    hit.dataset.to = e.to;
+    edgeLayer.appendChild(hit);
   }
 
   for (const [id, n] of Object.entries(nodesById)){
@@ -959,6 +964,110 @@ function installPan(svg, wrap){
   window.addEventListener('pointercancel', onUp);
 }
 
+function installHoverFocus(svg, wrap){
+  // Hover a bubble -> only its incoming/outgoing edges (+ their endpoints)
+  // stay bright; everything else dims.
+  // Hover an edge -> that edge + its two endpoint bubbles stay bright and a
+  // small tooltip shows "FROM_TAG -> TO_TAG".
+  let tooltip = wrap.querySelector('.edge-tooltip');
+  if (!tooltip){
+    tooltip = document.createElement('div');
+    tooltip.className = 'edge-tooltip';
+    wrap.appendChild(tooltip);
+  }
+
+  const clearEmph = () => {
+    svg.classList.remove('has-hover');
+    svg.querySelectorAll('.emph').forEach(el => el.classList.remove('emph'));
+  };
+  const hideTooltip = () => tooltip.classList.remove('show');
+
+  const emphEdge = (from, to) => {
+    const p = svg.querySelector(`.edge-vis[data-from="${from}"][data-to="${to}"]`);
+    if (p) p.classList.add('emph');
+    const fromNode = svg.querySelector(`.node[data-node-id="${from}"]`);
+    const toNode = svg.querySelector(`.node[data-node-id="${to}"]`);
+    if (fromNode) fromNode.classList.add('emph');
+    if (toNode) toNode.classList.add('emph');
+  };
+
+  const emphNode = (id) => {
+    const self = svg.querySelector(`.node[data-node-id="${id}"]`);
+    if (self) self.classList.add('emph');
+    const neighborIds = new Set();
+    svg.querySelectorAll(`.edge-vis[data-from="${id}"]`).forEach(el => {
+      el.classList.add('emph');
+      neighborIds.add(el.dataset.to);
+    });
+    svg.querySelectorAll(`.edge-vis[data-to="${id}"]`).forEach(el => {
+      el.classList.add('emph');
+      neighborIds.add(el.dataset.from);
+    });
+    for (const nid of neighborIds){
+      const el = svg.querySelector(`.node[data-node-id="${nid}"]`);
+      if (el) el.classList.add('emph');
+    }
+  };
+
+  const getTag = (id) => {
+    const tagEl = svg.querySelector(`.node[data-node-id="${id}"] .node-tag`);
+    if (tagEl && tagEl.textContent) return tagEl.textContent;
+    const titleEl = svg.querySelector(`.node[data-node-id="${id}"] .node-text`);
+    return titleEl ? titleEl.textContent : id;
+  };
+
+  const positionTooltip = (clientX, clientY) => {
+    const rect = wrap.getBoundingClientRect();
+    tooltip.style.left = `${clientX - rect.left}px`;
+    tooltip.style.top = `${clientY - rect.top}px`;
+  };
+
+  const showTooltip = (from, to, clientX, clientY) => {
+    tooltip.innerHTML =
+      `<span class="arrow-from">${escapeXml(getTag(from))}</span>` +
+      `<span class="arrow-mid">→</span>` +
+      `<span class="arrow-to">${escapeXml(getTag(to))}</span>`;
+    positionTooltip(clientX, clientY);
+    tooltip.classList.add('show');
+  };
+
+  svg.addEventListener('mouseover', (e) => {
+    if (svg.__panning) return;
+    const edgeHit = e.target?.closest?.('.edge-hit');
+    if (edgeHit){
+      clearEmph();
+      svg.classList.add('has-hover');
+      emphEdge(edgeHit.dataset.from, edgeHit.dataset.to);
+      showTooltip(edgeHit.dataset.from, edgeHit.dataset.to, e.clientX, e.clientY);
+      return;
+    }
+    const node = e.target?.closest?.('.node');
+    if (node && node.dataset.nodeId){
+      clearEmph();
+      svg.classList.add('has-hover');
+      emphNode(node.dataset.nodeId);
+      hideTooltip();
+    }
+  });
+
+  svg.addEventListener('mousemove', (e) => {
+    if (svg.__panning){ clearEmph(); hideTooltip(); return; }
+    const edgeHit = e.target?.closest?.('.edge-hit');
+    if (edgeHit) positionTooltip(e.clientX, e.clientY);
+  });
+
+  svg.addEventListener('mouseout', (e) => {
+    const to = e.relatedTarget;
+    const stillInside = to && (to.closest?.('.edge-hit') || to.closest?.('.node'));
+    if (!stillInside){
+      clearEmph();
+      hideTooltip();
+    }
+  });
+
+  svg.addEventListener('pointerdown', () => { clearEmph(); hideTooltip(); });
+}
+
 function renderResults(list, nodes, onPick){
   const el = document.getElementById('results');
   el.innerHTML = '';
@@ -1144,6 +1253,7 @@ function main(){
 
   installWheelZoom(svg, graphWrap);
   installPan(svg, graphWrap);
+  installHoverFocus(svg, graphWrap);
   reset();
 }
 
