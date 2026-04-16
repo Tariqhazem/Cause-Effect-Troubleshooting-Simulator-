@@ -397,13 +397,27 @@ select{
 .node.cause .node-rect{fill:rgba(26,32,53,.55); stroke:rgba(74,144,217,.35)}
 .node.logic .node-rect{fill:rgba(42,26,58,.45); stroke:rgba(191,64,255,.35)}
 .node.effect .node-rect{fill:rgba(42,26,26,.42); stroke:rgba(252,129,129,.32)}
+.node .node-rect{transition:stroke .15s ease, stroke-width .15s ease, filter .15s ease}
 .node.selected .node-rect{
-  stroke:rgba(167,139,250,.75);
-  filter:drop-shadow(0 0 16px rgba(191,64,255,.22));
+  stroke:rgba(167,139,250,.95);
+  stroke-width:2.5;
+  filter:drop-shadow(0 0 20px rgba(191,64,255,.55));
 }
 
 .node-hit{fill:transparent; cursor:pointer}
-.node:hover .node-rect{stroke:rgba(167,139,250,.6)}
+.node:hover .node-rect{
+  stroke:rgba(167,139,250,.85);
+  stroke-width:2;
+  filter:drop-shadow(0 0 12px rgba(191,64,255,.35));
+}
+
+/* Graph re-seed transition: fade + gentle zoom-in so it's obvious when the
+   chart has switched to a new selection (after clicking a bubble). */
+.graph.reseeding{animation:graph-reseed .35s ease-out}
+@keyframes graph-reseed{
+  0%{opacity:.15}
+  100%{opacity:1}
+}
 
 @media (max-width: 980px){
   .main{grid-template-columns: 1fr}

@@ -895,7 +895,9 @@ function installPan(svg, wrap){
   let startCX = 0, startCY = 0;
   let startVB = null;
   let moved = false;
-  const MOVE_PX = 4;
+  // Keep this generous so small hand jitter during a click still counts as a
+  // click (so clicking a node to re-seed the trace works reliably).
+  const MOVE_PX = 8;
 
   const onDown = (e) => {
     if (e.button !== undefined && e.button !== 0) return; // primary only
@@ -1087,6 +1089,13 @@ function main(){
     const collapse = !!collapseDupes.checked;
     const layout = layoutGraph(selectedId, subNodes, traced, collapse);
     renderGraphSvg(svg, subNodes, traced, layout, selectedId);
+
+    // Re-trigger the re-seed animation so the user sees a clear transition
+    // to the newly selected node's data.
+    svg.classList.remove('reseeding');
+    // force reflow so removing+adding the class restarts the animation
+    void svg.getBoundingClientRect();
+    svg.classList.add('reseeding');
 
     statusRight.textContent = `${nodeIds.size} nodes • ${traced.length} links`;
   }
