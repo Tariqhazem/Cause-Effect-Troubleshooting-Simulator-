@@ -1,8 +1,6 @@
-# CLAUDE.md
+# CLAUDE.md — Project Guidelines
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+Behavioral guidelines to reduce common LLM coding mistakes. These bias toward caution over speed. For trivial tasks, use judgment.
 
 ## 1. Think Before Coding
 
@@ -24,8 +22,6 @@ Before implementing:
 - No error handling for impossible scenarios.
 - If you write 200 lines and it could be 50, rewrite it.
 
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
 ## 3. Surgical Changes
 
 **Touch only what you must. Clean up only your own mess.**
@@ -46,11 +42,6 @@ The test: Every changed line should trace directly to the user's request.
 
 **Define success criteria. Loop until verified.**
 
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
 For multi-step tasks, state a brief plan:
 ```
 1. [Step] → verify: [check]
@@ -58,8 +49,35 @@ For multi-step tasks, state a brief plan:
 3. [Step] → verify: [check]
 ```
 
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+## 5. Workflow Rules
+- All edits go directly to `main` branch unless told otherwise
+- Always illustrate understanding of the request before implementing
+- Wait for user confirmation if anything is ambiguous
+- Never add features, abstractions, or frameworks beyond what was asked
 
----
+## 6. Code & Architecture Rules
+- Static web apps: HTML/CSS/JS only, no build tools, no bundlers, no transpilers
+- No npm, no frameworks, no server-side dependencies
+- Apps must work when downloaded and opened as a local file (offline-capable)
+- Keep file count minimal — prefer editing existing files over creating new ones
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+## 7. Visual & Design Rules
+- Respect the existing visual theme — never overhaul the look without permission
+- Keep the dark-glass + neon accent style as the default design language
+- Credit lines are sacred — never change them without explicit request
+
+## 8. Data Rules
+- Embedded data inside JS files should never be deleted or restructured without being asked
+- Tag normalization and parsing logic should be preserved carefully
+
+## 9. Never Do
+- Never add build tools, bundlers, transpilers, or package managers
+- Never push to any branch other than `main` unless told otherwise
+- Never remove or rename existing functions without being asked
+- Never change splash/intro screens without permission
+- Never introduce security vulnerabilities
+
+## 10. Communication Style
+- Illustrate understanding before implementing
+- Apply edits directly — no PRs unless explicitly requested
+- Keep responses concise and focused
