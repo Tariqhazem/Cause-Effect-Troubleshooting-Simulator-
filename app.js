@@ -666,6 +666,35 @@ function renderGraphSvg(svg, nodesById, edges, layout, seedId){
 
   const kindOf = (id) => nodesById[id]?.kind || 'logic';
 
+  // Color action keywords inside a node's text:
+  //   Close / Stop / Shutdown -> red
+  //   Open  / Activate / Start -> green
+  const applyActionText = (textEl, raw) => {
+    textEl.textContent = '';
+    const pattern = /\b(close|stop|shutdown|open|activate|start)\b/gi;
+    let lastIdx = 0;
+    let m;
+    while ((m = pattern.exec(raw)) !== null){
+      if (m.index > lastIdx){
+        const pre = document.createElementNS(NS, 'tspan');
+        pre.textContent = raw.slice(lastIdx, m.index);
+        textEl.appendChild(pre);
+      }
+      const word = m[0];
+      const isStop = /^(close|stop|shutdown)$/i.test(word);
+      const span = document.createElementNS(NS, 'tspan');
+      span.classList.add(isStop ? 'action-stop' : 'action-go');
+      span.textContent = word;
+      textEl.appendChild(span);
+      lastIdx = m.index + word.length;
+    }
+    if (lastIdx < raw.length){
+      const tail = document.createElementNS(NS, 'tspan');
+      tail.textContent = raw.slice(lastIdx);
+      textEl.appendChild(tail);
+    }
+  };
+
   for (const e of edges){
     if (!layout.pos[e.from] || !layout.pos[e.to]) continue;
     const a = getCenter(e.from);
@@ -740,7 +769,7 @@ function renderGraphSvg(svg, nodesById, edges, layout, seedId){
         det.classList.add('node-sub');
         det.setAttribute('x', String(p.x + 12));
         det.setAttribute('y', String(p.y + 70));
-        det.textContent = shrinkText(n.detail, 50);
+        applyActionText(det, shrinkText(n.detail, 50));
         g.appendChild(det);
       }
     } else {
@@ -748,7 +777,7 @@ function renderGraphSvg(svg, nodesById, edges, layout, seedId){
       sub.classList.add('node-sub');
       sub.setAttribute('x', String(p.x + 12));
       sub.setAttribute('y', String(p.y + 50));
-      sub.textContent = shrinkText(n.detail || n.kind.toUpperCase(), 56);
+      applyActionText(sub, shrinkText(n.detail || n.kind.toUpperCase(), 56));
       g.appendChild(sub);
     }
 
